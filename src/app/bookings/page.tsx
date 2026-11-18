@@ -1,8 +1,7 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
 
 interface CarOption {
@@ -21,11 +20,7 @@ interface TestDriveItem {
   scheduled_time: string;
   notes?: string;
   status: string;
-  car?: {
-    model_name: string;
-    year: number;
-    brand?: { name: string };
-  };
+  car?: { model_name: string; brand?: { name: string } };
 }
 
 interface TransactionItem {
@@ -34,27 +29,39 @@ interface TransactionItem {
   car_id: number;
   payment_method: string;
   car_price?: number;
-  discount_amount?: number;
   final_price?: number;
   down_payment?: number;
   tenor_months?: number;
   monthly_installment?: number;
   status: string;
-  car?: {
-    model_name: string;
-    year: number;
-    price: number;
-    brand?: { name: string };
-  };
+  car?: { model_name: string; brand?: { name: string } };
+}
+
+interface ConsultationItem {
+  id: number;
+  car_id?: number;
+  subject: string;
+  message: string;
+  reply?: string;
+  status: string;
+  created_at?: string;
+  car?: { model_name: string; brand?: { name: string } };
+}
+
+interface PromotionItem {
+  id: number;
+  code: string;
+  title: string;
+  description?: string;
+  discount_amount: number;
+  valid_until: string;
 }
 
 function extractArray(raw: any): any[] {
   if (Array.isArray(raw)) return raw;
   if (Array.isArray(raw?.data)) return raw.data;
-  if (Array.isArray(raw?.data?.cars)) return raw.data.cars;
   if (Array.isArray(raw?.data?.items)) return raw.data.items;
-  if (Array.isArray(raw?.cars)) return raw.cars;
-  if (Array.isArray(raw?.items)) return raw.items;
+  if (Array.isArray(raw?.data?.cars)) return raw.data.cars;
   return [];
 }
 
@@ -63,464 +70,661 @@ function BookingsContent() {
   const searchParams = useSearchParams();
 
   const initialCarId = searchParams.get('car_id') || '';
-  const initialType = searchParams.get('type') === 'order' ? 'order' : 'test-drive';
+  const initialType = searchParams.get('type');
 
-  const [activeTab, setActiveTab] = useState<'test-drive' | 'order'>(initialType);
+  const [activeTab, setActiveTab] = useState<'test-drive' | 'order' | 'consultation'>(
+    initialType === 'order' ? 'order' : 'test-drive'
+  );
+
   const [cars, setCars] = useState<CarOption[]>([]);
   const [testDrives, setTestDrives] = useState<TestDriveItem[]>([]);
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [consultations, setConsultations] = useState<ConsultationItem[]>([]);
+  const [promotions, setPromotions] = useState<PromotionItem[]>([]);
 
-  // Form States: Test Drive
-  const [selectedCarId, setSelectedCarId] = useState<string>(initialCarId);
-  const [scheduledDate, setScheduledDate] = useState<string>('');
-  const [scheduledTime, setScheduledTime] = useState<string>('10:00');
-  const [notes, setNotes] = useState<string>('');
+  // Form Test Drive
+  const [tdCarId, setTdCarId] = useState(initialCarId);
+  const [tdDate, setTdDate] = useState('');
+  const [tdTime, setTdTime] = useState('10:00');
+  const [tdNotes, setTdNotes] = useState('');
 
-  // Form States: Pemesanan Unit
+  // Form Order / Pembelian
+  const [orderCarId, setOrderCarId] = useState(initialCarId);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'credit'>('cash');
-  const [promoCode, setPromoCode] = useState<string>('');
-  const [downPayment, setDownPayment] = useState<string>('50000000');
+  const [downPayment, setDownPayment] = useState<number>(50000000);
   const [tenorMonths, setTenorMonths] = useState<number>(36);
+  const [promoCode, setPromoCode] = useState('');
+  const [orderNotes, setOrderNotes] = useState('');
 
-  const [loadingData, setLoadingData] = useState(true);
+  // Form Konsultasi Sales
+  const [consCarId, setConsCarId] = useState(initialCarId);
+  const [consSubject, setConsSubject] = useState('');
+  const [consMessage, setConsMessage] = useState('');
+
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const loadAllData = async () => {
+    try {
+      const [carsRes, tdRes, txRes, consRes, promoRes] = await Promise.allSettled([
+        apiFetch('/cars?limit=50'),
+        apiFetch('/buyer/test-drives'),
+        apiFetch('/buyer/transactions'),
+        apiFetch('/buyer/consultations'),
+        apiFetch('/promotions'),
+      ]);
+
+      if (carsRes.status === 'fulfilled') {
+        const list = extractArray(carsRes.value);
+        setCars(list);
+        if (!tdCarId && list.length > 0) setTdCarId(String(list[0].id));
+        if (!orderCarId && list.length > 0) setOrderCarId(String(list[0].id));
+      }
+
+      if (tdRes.status === 'fulfilled') setTestDrives(extractArray(tdRes.value));
+      if (txRes.status === 'fulfilled') setTransactions(extractArray(txRes.value));
+      if (consRes.status === 'fulfilled') setConsultations(extractArray(consRes.value));
+      if (promoRes.status === 'fulfilled') setPromotions(extractArray(promoRes.value));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
       router.push('/login');
       return;
     }
-
-    try {
-      const [carsRes, tdRes, txRes] = await Promise.allSettled([
-        apiFetch('/cars'),
-        apiFetch('/buyer/test-drives'),
-        apiFetch('/buyer/transactions'),
-      ]);
-
-      if (carsRes.status === 'fulfilled') {
-        const list = extractArray(carsRes.value);
-        setCars(
-          list.filter(
-            (c: CarOption) =>
-              !c.status ||
-              c.status.toLowerCase() === 'available' ||
-              String(c.id) === initialCarId
-          )
-        );
-      }
-
-      if (tdRes.status === 'fulfilled') {
-        setTestDrives(extractArray(tdRes.value));
-      }
-
-      if (txRes.status === 'fulfilled') {
-        setTransactions(extractArray(txRes.value));
-      }
-    } finally {
-      setLoadingData(false);
-    }
-  };
-
-  useEffect(() => {
     loadAllData();
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleBookTestDrive = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMessage(null);
-
-    if (!selectedCarId) {
-      setMessage({ type: 'error', text: 'Silakan pilih unit mobil terlebih dahulu.' });
-      return;
-    }
-
+    setFeedback(null);
     setSubmitting(true);
+
     try {
-      if (activeTab === 'test-drive') {
-        if (!scheduledDate || !scheduledTime) {
-          setMessage({ type: 'error', text: 'Tanggal dan jam test drive wajib diisi.' });
-          setSubmitting(false);
-          return;
-        }
+      await apiFetch('/buyer/test-drives', {
+        method: 'POST',
+        body: JSON.stringify({
+          car_id: Number(tdCarId),
+          scheduled_date: tdDate,
+          scheduled_time: tdTime,
+          notes: tdNotes,
+        }),
+      });
 
-        await apiFetch('/buyer/test-drives', {
-          method: 'POST',
-          body: JSON.stringify({
-            car_id: Number(selectedCarId),
-            scheduled_date: scheduledDate,
-            scheduled_time: scheduledTime,
-            notes,
-          }),
-        });
-
-        setMessage({ type: 'success', text: 'Jadwal test drive berhasil diajukan!' });
-        setNotes('');
-      } else {
-        const orderPayload: any = {
-          car_id: Number(selectedCarId),
-          payment_method: paymentMethod,
-          promo_code: promoCode.trim(),
-        };
-
-        if (paymentMethod === 'credit') {
-          orderPayload.down_payment = Number(downPayment) || 0;
-          orderPayload.tenor_months = Number(tenorMonths);
-        }
-
-        await apiFetch('/buyer/transactions', {
-          method: 'POST',
-          body: JSON.stringify(orderPayload),
-        });
-
-        setMessage({
-          type: 'success',
-          text: 'Pemesanan unit berhasil dibuat! Status unit otomatis terkunci (booked).',
-        });
-        setPromoCode('');
-      }
-
+      setFeedback({ type: 'success', text: 'Jadwal test drive berhasil diajukan!' });
+      setTdNotes('');
       await loadAllData();
     } catch (err: any) {
-      setMessage({
-        type: 'error',
-        text: err.message || 'Gagal mengirim pengajuan. Periksa kembali isian Anda.',
+      setFeedback({ type: 'error', text: err.message || 'Gagal mengajukan test drive.' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCreateOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFeedback(null);
+    setSubmitting(true);
+
+    try {
+      const payload: any = {
+        car_id: Number(orderCarId),
+        payment_method: paymentMethod,
+        promo_code: promoCode.trim(),
+        notes: orderNotes,
+      };
+
+      if (paymentMethod === 'credit') {
+        payload.down_payment = Number(downPayment);
+        payload.tenor_months = Number(tenorMonths);
+      }
+
+      await apiFetch('/buyer/transactions', {
+        method: 'POST',
+        body: JSON.stringify(payload),
       });
+
+      setFeedback({ type: 'success', text: 'Pemesanan unit berhasil dibuat! Tim sales akan segera memproses.' });
+      setOrderNotes('');
+      setPromoCode('');
+      await loadAllData();
+    } catch (err: any) {
+      setFeedback({ type: 'error', text: err.message || 'Gagal membuat pemesanan unit.' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCreateConsultation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFeedback(null);
+    setSubmitting(true);
+
+    try {
+      await apiFetch('/buyer/consultations', {
+        method: 'POST',
+        body: JSON.stringify({
+          car_id: consCarId ? Number(consCarId) : null,
+          subject: consSubject,
+          message: consMessage,
+        }),
+      });
+
+      setFeedback({ type: 'success', text: 'Pertanyaan konsultasi terkirim ke tim Sales!' });
+      setConsSubject('');
+      setConsMessage('');
+      await loadAllData();
+    } catch (err: any) {
+      setFeedback({ type: 'error', text: err.message || 'Gagal mengirim konsultasi.' });
     } finally {
       setSubmitting(false);
     }
   };
 
   const statusBadge = (status: string) => {
-    const s = (status || 'pending').toLowerCase();
-    if (s === 'approved' || s === 'completed' || s === 'confirmed') {
-      return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+    const s = status?.toLowerCase() || 'pending';
+    if (s === 'approved' || s === 'confirmed' || s === 'completed' || s === 'replied') {
+      return 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30';
     }
     if (s === 'rejected' || s === 'cancelled') {
-      return 'bg-red-500/10 text-red-400 border-red-500/30';
+      return 'bg-red-500/15 text-red-300 border-red-400/30';
     }
-    return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+    return 'bg-amber-500/15 text-amber-300 border-amber-400/30';
   };
 
   return (
-    <main className="min-h-screen px-6 py-8">
+    <main className="min-h-screen px-6 py-10 bg-[#090b10]">
       <div className="max-w-6xl mx-auto">
         <header className="mb-8">
-          <h1 className="text-2xl font-bold text-white">Aktivitas & Transaksi Saya</h1>
+          <span className="text-[11px] uppercase tracking-[0.22em] text-amber-400 font-semibold">
+            Client Portal
+          </span>
+          <h1 className="text-3xl font-bold text-white mt-1">Aktivitas & Layanan Pembeli</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Ajukan jadwal test drive, pemesanan unit mobil (Cash/Kredit), dan pantau status konfirmasi showroom.
+            Kelola jadwal test drive, transaksi pembelian unit, dan konsultasi langsung bersama konsultan sales.
           </p>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Kolom Kiri: Form Pengajuan */}
-          <div className="lg:col-span-5 rounded-2xl bg-slate-900 border border-slate-800 p-6 h-fit">
-            {/* Switcher Tab */}
-            <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-950 border border-slate-800 mb-6">
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('test-drive');
-                  setMessage(null);
-                }}
-                className={`py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                  activeTab === 'test-drive'
-                    ? 'bg-blue-600 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Booking Test Drive
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('order');
-                  setMessage(null);
-                }}
-                className={`py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                  activeTab === 'order'
-                    ? 'bg-blue-600 text-white'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Beli / Pesan Unit
-              </button>
-            </div>
+        {/* Tab Switcher */}
+        <div className="flex flex-wrap gap-3 mb-8">
+          <button
+            onClick={() => {
+              setActiveTab('test-drive');
+              setFeedback(null);
+            }}
+            className={`px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer ${
+              activeTab === 'test-drive'
+                ? 'bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20'
+                : 'bg-[#10131c] text-slate-300 hover:text-white border border-white/10'
+            }`}
+          >
+            Test Drive ({testDrives.length})
+          </button>
 
-            {message && (
-              <div
-                className={`mb-4 p-3 rounded-lg border text-xs ${
-                  message.type === 'success'
-                    ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
-                    : 'bg-red-950/60 border-red-800 text-red-300'
-                }`}
-              >
-                {message.text}
-              </div>
-            )}
+          <button
+            onClick={() => {
+              setActiveTab('order');
+              setFeedback(null);
+            }}
+            className={`px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer ${
+              activeTab === 'order'
+                ? 'bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20'
+                : 'bg-[#10131c] text-slate-300 hover:text-white border border-white/10'
+            }`}
+          >
+            Pemesanan Unit ({transactions.length})
+          </button>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+          <button
+            onClick={() => {
+              setActiveTab('consultation');
+              setFeedback(null);
+            }}
+            className={`px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer ${
+              activeTab === 'consultation'
+                ? 'bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20'
+                : 'bg-[#10131c] text-slate-300 hover:text-white border border-white/10'
+            }`}
+          >
+            Konsultasi Sales ({consultations.length})
+          </button>
+        </div>
+
+        {feedback && (
+          <div
+            className={`mb-6 p-4 rounded-xl border text-xs font-medium ${
+              feedback.type === 'success'
+                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                : 'bg-red-950/60 border-red-500/40 text-red-300'
+            }`}
+          >
+            {feedback.text}
+          </div>
+        )}
+
+        {/* TAB 1: TEST DRIVE */}
+        {activeTab === 'test-drive' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <form
+              onSubmit={handleBookTestDrive}
+              className="lg:col-span-5 rounded-2xl bg-[#10131c] border border-white/10 p-6 space-y-4 h-fit"
+            >
+              <h2 className="text-base font-bold text-white pb-3 border-b border-white/10">
+                Ajukan Jadwal Test Drive
+              </h2>
+
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Pilih Unit Mobil *
-                </label>
+                <label className="block text-xs text-slate-300 mb-1.5">Pilih Unit Mobil</label>
                 <select
                   required
-                  value={selectedCarId}
-                  onChange={(e) => setSelectedCarId(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
+                  value={tdCarId}
+                  onChange={(e) => setTdCarId(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
                 >
-                  <option value="">-- Pilih Mobil --</option>
-                  {cars.map((car) => (
-                    <option key={car.id} value={String(car.id)}>
-                      {car.brand?.name ? `${car.brand.name} ` : ''}
-                      {car.model_name} ({car.year}) - Rp {Number(car.price).toLocaleString('id-ID')}
+                  {cars.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.brand?.name ? `${c.brand.name} ` : ''}
+                      {c.model_name} ({c.year})
                     </option>
                   ))}
                 </select>
               </div>
 
-              {activeTab === 'test-drive' ? (
-                <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                        Tanggal Kunjungan *
-                      </label>
-                      <input
-                        type="date"
-                        required
-                        value={scheduledDate}
-                        onChange={(e) => setScheduledDate(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-300 mb-1.5">Tanggal</label>
+                  <input
+                    type="date"
+                    required
+                    value={tdDate}
+                    onChange={(e) => setTdDate(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-300 mb-1.5">Jam Kunjungan</label>
+                  <input
+                    type="time"
+                    required
+                    value={tdTime}
+                    onChange={(e) => setTdTime(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
+                  />
+                </div>
+              </div>
 
-                    <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                        Jam Kunjungan *
-                      </label>
-                      <input
-                        type="time"
-                        required
-                        value={scheduledTime}
-                        onChange={(e) => setScheduledTime(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      Catatan Tambahan (Opsional)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="Contoh: Saya datang bersama keluarga pukul 10 pagi..."
-                      className="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      Metode Pembayaran *
-                    </label>
-                    <select
-                      value={paymentMethod}
-                      onChange={(e) => setPaymentMethod(e.target.value as 'cash' | 'credit')}
-                      className="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="cash">Cash / Tunai Lunas</option>
-                      <option value="credit">Kredit / Cicilan Leasing</option>
-                    </select>
-                  </div>
-
-                  {paymentMethod === 'credit' && (
-                    <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
-                      <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                          Uang Muka / DP (Rp) *
-                        </label>
-                        <input
-                          type="number"
-                          required
-                          min={5000000}
-                          step={5000000}
-                          value={downPayment}
-                          onChange={(e) => setDownPayment(e.target.value)}
-                          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                          Tenor Cicilan *
-                        </label>
-                        <select
-                          value={tenorMonths}
-                          onChange={(e) => setTenorMonths(Number(e.target.value))}
-                          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                        >
-                          <option value={12}>12 Bulan (1 Tahun)</option>
-                          <option value={24}>24 Bulan (2 Tahun)</option>
-                          <option value={36}>36 Bulan (3 Tahun)</option>
-                          <option value={48}>48 Bulan (4 Tahun)</option>
-                          <option value={60}>60 Bulan (5 Tahun)</option>
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      Kode Promo (Opsional)
-                    </label>
-                    <input
-                      type="text"
-                      value={promoCode}
-                      onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
-                      placeholder="Contoh: HEMAT10JT"
-                      className="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white uppercase focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </>
-              )}
+              <div>
+                <label className="block text-xs text-slate-300 mb-1.5">Catatan Tambahan</label>
+                <textarea
+                  rows={3}
+                  value={tdNotes}
+                  onChange={(e) => setTdNotes(e.target.value)}
+                  placeholder="Contoh: Ingin mencoba rute jalan tol sekitar showroom..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
+                />
+              </div>
 
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold transition cursor-pointer"
+                className="w-full py-3 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase tracking-wider transition cursor-pointer"
               >
-                {submitting
-                  ? 'Mengirim Pengajuan...'
-                  : activeTab === 'test-drive'
-                  ? 'Ajukan Jadwal Test Drive'
-                  : 'Kirim Pengajuan Pembelian'}
+                {submitting ? 'Mengirim...' : 'Booking Test Drive'}
               </button>
             </form>
+
+            <div className="lg:col-span-7 space-y-4">
+              <h2 className="text-base font-bold text-white">Riwayat Test Drive Anda</h2>
+              {loading ? (
+                <p className="text-slate-400 text-sm animate-pulse">Memuat riwayat...</p>
+              ) : testDrives.length === 0 ? (
+                <div className="p-8 rounded-2xl bg-[#10131c] border border-white/10 text-center text-slate-400 text-sm">
+                  Belum ada pengajuan test drive.
+                </div>
+              ) : (
+                testDrives.map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-5 rounded-2xl bg-[#10131c] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div>
+                      <h3 className="font-bold text-white text-sm">
+                        {item.car?.brand?.name ? `${item.car.brand.name} ` : ''}
+                        {item.car?.model_name || `Unit #${item.car_id}`}
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Jadwal: <strong className="text-slate-200">{item.scheduled_date}</strong> pukul{' '}
+                        <strong className="text-slate-200">{item.scheduled_time}</strong>
+                      </p>
+                      {item.notes && <p className="text-xs text-slate-500 mt-1">Catatan: {item.notes}</p>}
+                    </div>
+                    <span
+                      className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase border w-fit ${statusBadge(
+                        item.status
+                      )}`}
+                    >
+                      {item.status}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
+        )}
 
-          {/* Kolom Kanan: Riwayat Test Drive & Pemesanan */}
-          <div className="lg:col-span-7 space-y-8">
-            {loadingData ? (
-              <p className="text-slate-400 animate-pulse text-sm">Memuat riwayat aktivitas...</p>
-            ) : (
-              <>
-                {/* Bagian 1: Riwayat Test Drive */}
-                <section>
-                  <h2 className="text-base font-semibold text-white mb-3">
-                    Riwayat Jadwal Test Drive ({testDrives.length})
-                  </h2>
+        {/* TAB 2: PEMESANAN UNIT */}
+        {activeTab === 'order' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <form
+              onSubmit={handleCreateOrder}
+              className="lg:col-span-5 rounded-2xl bg-[#10131c] border border-white/10 p-6 space-y-4 h-fit"
+            >
+              <h2 className="text-base font-bold text-white pb-3 border-b border-white/10">
+                Formulir Pemesanan Unit
+              </h2>
 
-                  {testDrives.length === 0 ? (
-                    <div className="p-6 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-400 text-xs">
-                      Belum ada pengajuan jadwal test drive.
+              <div>
+                <label className="block text-xs text-slate-300 mb-1.5">Pilih Mobil</label>
+                <select
+                  required
+                  value={orderCarId}
+                  onChange={(e) => setOrderCarId(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
+                >
+                  {cars.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.brand?.name ? `${c.brand.name} ` : ''}
+                      {c.model_name} - Rp {Number(c.price).toLocaleString('id-ID')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1.5">Metode Pembayaran</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('cash')}
+                    className={`py-2.5 rounded-xl text-xs font-bold uppercase border transition cursor-pointer ${
+                      paymentMethod === 'cash'
+                        ? 'bg-amber-400/20 border-amber-400 text-amber-300'
+                        : 'bg-[#090b10] border-white/10 text-slate-400'
+                    }`}
+                  >
+                    Tunai (Cash)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('credit')}
+                    className={`py-2.5 rounded-xl text-xs font-bold uppercase border transition cursor-pointer ${
+                      paymentMethod === 'credit'
+                        ? 'bg-amber-400/20 border-amber-400 text-amber-300'
+                        : 'bg-[#090b10] border-white/10 text-slate-400'
+                    }`}
+                  >
+                    Kredit (Leasing)
+                  </button>
+                </div>
+              </div>
+
+              {paymentMethod === 'credit' && (
+                <div className="p-4 rounded-xl bg-[#090b10] border border-white/10 space-y-3">
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">Uang Muka / DP (Rp)</label>
+                    <input
+                      type="number"
+                      min={10000000}
+                      step={5000000}
+                      required
+                      value={downPayment}
+                      onChange={(e) => setDownPayment(Number(e.target.value))}
+                      className="w-full px-3.5 py-2 rounded-lg bg-[#10131c] border border-white/10 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1">Tenor Cicilan</label>
+                    <select
+                      value={tenorMonths}
+                      onChange={(e) => setTenorMonths(Number(e.target.value))}
+                      className="w-full px-3.5 py-2 rounded-lg bg-[#10131c] border border-white/10 text-sm text-white"
+                    >
+                      <option value={12}>12 Bulan (1 Tahun)</option>
+                      <option value={24}>24 Bulan (2 Tahun)</option>
+                      <option value={36}>36 Bulan (3 Tahun)</option>
+                      <option value={48}>48 Bulan (4 Tahun)</option>
+                      <option value={60}>60 Bulan (5 Tahun)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1.5">Kode Promo (Opsional)</label>
+                <input
+                  type="text"
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                  placeholder="Masukkan kode promo showroom"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white uppercase"
+                />
+                {promotions.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {promotions.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setPromoCode(p.code)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-400/30 text-[11px] text-amber-300 hover:bg-amber-500/20 cursor-pointer"
+                      >
+                        Pakai <strong>{p.code}</strong> (-Rp{' '}
+                        {Number(p.discount_amount).toLocaleString('id-ID')})
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1.5">Catatan Pemesanan</label>
+                <textarea
+                  rows={2}
+                  value={orderNotes}
+                  onChange={(e) => setOrderNotes(e.target.value)}
+                  placeholder="Catatan pengiriman atau permintaan STNK..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full py-3 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+              >
+                {submitting ? 'Memproses...' : 'Konfirmasi Pemesanan Unit'}
+              </button>
+            </form>
+
+            <div className="lg:col-span-7 space-y-4">
+              <h2 className="text-base font-bold text-white">Daftar Transaksi & Invoice</h2>
+              {loading ? (
+                <p className="text-slate-400 text-sm animate-pulse">Memuat transaksi...</p>
+              ) : transactions.length === 0 ? (
+                <div className="p-8 rounded-2xl bg-[#10131c] border border-white/10 text-center text-slate-400 text-sm">
+                  Belum ada transaksi pemesanan unit.
+                </div>
+              ) : (
+                transactions.map((tx) => (
+                  <div
+                    key={tx.id}
+                    className="p-5 rounded-2xl bg-[#10131c] border border-white/10 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-mono text-amber-400">
+                        {tx.invoice_number || `TRX-#${tx.id}`}
+                      </span>
+                      <span
+                        className={`px-3 py-0.5 rounded-full text-[11px] font-bold uppercase border ${statusBadge(
+                          tx.status
+                        )}`}
+                      >
+                        {tx.status}
+                      </span>
                     </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {testDrives.map((td) => (
-                        <div
-                          key={td.id}
-                          className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                        >
-                          <div>
-                            <Link
-                              href={`/cars/${td.car_id}`}
-                              className="font-semibold text-sm text-white hover:text-blue-400"
-                            >
-                              {td.car?.brand?.name ? `${td.car.brand.name} ` : ''}
-                              {td.car?.model_name || `Mobil #${td.car_id}`}
-                            </Link>
-                            <p className="text-xs text-slate-400 mt-1">
-                              Jadwal: <strong className="text-slate-200">{td.scheduled_date}</strong> pukul{' '}
-                              <strong className="text-slate-200">{td.scheduled_time} WIB</strong>
-                            </p>
-                            {td.notes && (
-                              <p className="text-xs text-slate-500 mt-1">Catatan: {td.notes}</p>
-                            )}
-                          </div>
 
-                          <span
-                            className={`self-start sm:self-center px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase border ${statusBadge(
-                              td.status
-                            )}`}
-                          >
-                            {td.status || 'pending'}
-                          </span>
-                        </div>
-                      ))}
+                    <h3 className="font-bold text-white text-base">
+                      {tx.car?.brand?.name ? `${tx.car.brand.name} ` : ''}
+                      {tx.car?.model_name || `Mobil #${tx.car_id}`}
+                    </h3>
+
+                    <div className="text-xs text-slate-400 flex flex-wrap gap-x-6 gap-y-1 pt-1">
+                      <span>
+                        Metode: <strong className="text-slate-200 uppercase">{tx.payment_method}</strong>
+                      </span>
+                      <span>
+                        Total Harga:{' '}
+                        <strong className="text-amber-400">
+                          Rp {Number(tx.final_price || tx.car_price || 0).toLocaleString('id-ID')}
+                        </strong>
+                      </span>
+                      {tx.payment_method === 'credit' && tx.monthly_installment && (
+                        <span>
+                          Cicilan:{' '}
+                          <strong className="text-slate-200">
+                            Rp {Number(tx.monthly_installment).toLocaleString('id-ID')}/bln ({tx.tenor_months} bln)
+                          </strong>
+                        </span>
+                      )}
                     </div>
-                  )}
-                </section>
-
-                {/* Bagian 2: Riwayat Transaksi Pembelian */}
-                <section>
-                  <h2 className="text-base font-semibold text-white mb-3">
-                    Riwayat Pemesanan Unit ({transactions.length})
-                  </h2>
-
-                  {transactions.length === 0 ? (
-                    <div className="p-6 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-400 text-xs">
-                      Belum ada riwayat pemesanan unit mobil.
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {transactions.map((tx) => (
-                        <div
-                          key={tx.id}
-                          className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                        >
-                          <div>
-                            {tx.invoice_number && (
-                              <span className="text-[11px] font-mono text-blue-400 block mb-0.5">
-                                {tx.invoice_number}
-                              </span>
-                            )}
-                            <Link
-                              href={`/cars/${tx.car_id}`}
-                              className="font-semibold text-sm text-white hover:text-blue-400"
-                            >
-                              {tx.car?.brand?.name ? `${tx.car.brand.name} ` : ''}
-                              {tx.car?.model_name || `Mobil #${tx.car_id}`}
-                            </Link>
-                            <p className="text-xs text-emerald-400 font-semibold mt-1">
-                              Total: Rp{' '}
-                              {Number(tx.final_price || tx.car_price || tx.car?.price || 0).toLocaleString(
-                                'id-ID'
-                              )}
-                            </p>
-                            <p className="text-xs text-slate-400 mt-0.5 capitalize">
-                              Metode: {tx.payment_method}
-                              {tx.payment_method === 'credit' && tx.tenor_months
-                                ? ` (${tx.tenor_months} bln • Cicilan Rp ${Number(
-                                    tx.monthly_installment || 0
-                                  ).toLocaleString('id-ID')}/bln)`
-                                : ''}
-                            </p>
-                          </div>
-
-                          <span
-                            className={`self-start sm:self-center px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase border ${statusBadge(
-                              tx.status
-                            )}`}
-                          >
-                            {tx.status || 'pending'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </>
-            )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* TAB 3: KONSULTASI SALES */}
+        {activeTab === 'consultation' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <form
+              onSubmit={handleCreateConsultation}
+              className="lg:col-span-5 rounded-2xl bg-[#10131c] border border-white/10 p-6 space-y-4 h-fit"
+            >
+              <h2 className="text-base font-bold text-white pb-3 border-b border-white/10">
+                Tanya Konsultan Sales
+              </h2>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1.5">
+                  Unit Terkait (Opsional)
+                </label>
+                <select
+                  value={consCarId}
+                  onChange={(e) => setConsCarId(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
+                >
+                  <option value="">-- Pertanyaan Umum Showroom --</option>
+                  {cars.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.brand?.name ? `${c.brand.name} ` : ''}
+                      {c.model_name} ({c.year})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1.5">Subjek Pertanyaan *</label>
+                <input
+                  type="text"
+                  required
+                  value={consSubject}
+                  onChange={(e) => setConsSubject(e.target.value)}
+                  placeholder="Contoh: Tanya simulasi tukar tambah / riwayat servis"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1.5">Detail Pertanyaan *</label>
+                <textarea
+                  rows={4}
+                  required
+                  value={consMessage}
+                  onChange={(e) => setConsMessage(e.target.value)}
+                  placeholder="Tuliskan pertanyaan Anda untuk tim sales kami..."
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-sm text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full py-3 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+              >
+                {submitting ? 'Mengirim...' : 'Kirim Pertanyaan'}
+              </button>
+            </form>
+
+            <div className="lg:col-span-7 space-y-4">
+              <h2 className="text-base font-bold text-white">Riwayat Konsultasi & Balasan</h2>
+              {loading ? (
+                <p className="text-slate-400 text-sm animate-pulse">Memuat konsultasi...</p>
+              ) : consultations.length === 0 ? (
+                <div className="p-8 rounded-2xl bg-[#10131c] border border-white/10 text-center text-slate-400 text-sm">
+                  Belum ada riwayat konsultasi. Silakan kirim pertanyaan pertama Anda.
+                </div>
+              ) : (
+                consultations.map((c) => (
+                  <div
+                    key={c.id}
+                    className="p-5 rounded-2xl bg-[#10131c] border border-white/10 space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="text-[11px] text-amber-400 font-semibold uppercase">
+                          {c.car?.model_name
+                            ? `${c.car.brand?.name || ''} ${c.car.model_name}`
+                            : 'Konsultasi Umum'}
+                        </span>
+                        <h3 className="font-bold text-white text-sm mt-0.5">{c.subject}</h3>
+                      </div>
+                      <span
+                        className={`px-3 py-0.5 rounded-full text-[10px] font-bold uppercase border ${statusBadge(
+                          c.status
+                        )}`}
+                      >
+                        {c.reply ? 'Dibalas' : c.status || 'Menunggu'}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-300 leading-relaxed bg-[#090b10] p-3.5 rounded-xl border border-white/5">
+                      {c.message}
+                    </p>
+
+                    {c.reply ? (
+                      <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block mb-1">
+                          Balasan Tim Sales:
+                        </span>
+                        <p className="text-xs text-slate-200 leading-relaxed">{c.reply}</p>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-500 italic">
+                        Menunggu tanggapan dari konsultan sales...
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );
@@ -530,9 +734,9 @@ export default function BookingsPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen px-6 py-8 max-w-6xl mx-auto">
-          <p className="text-slate-400 text-sm">Memuat halaman aktivitas...</p>
-        </main>
+        <div className="min-h-screen px-6 py-10 max-w-6xl mx-auto text-slate-400 text-sm">
+          Memuat halaman layanan...
+        </div>
       }
     >
       <BookingsContent />

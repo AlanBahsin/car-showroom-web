@@ -23,10 +23,10 @@ export default function Navbar() {
         try {
           setUser(JSON.parse(storedUser));
         } catch {
-          setUser({ name: 'User' });
+          setUser({ name: 'Member' });
         }
       } else if (token) {
-        setUser({ name: 'User' });
+        setUser({ name: 'Member' });
       } else {
         setUser(null);
       }
@@ -45,26 +45,36 @@ export default function Navbar() {
   };
 
   const navLinkClass = (href: string) =>
-    `text-sm font-medium transition ${
+    `relative py-1 text-xs uppercase tracking-widest font-semibold transition-colors ${
       pathname === href
-        ? 'text-blue-400'
+        ? 'text-amber-400 after:content-[""] after:absolute after:left-0 after:-bottom-1 after:w-full after:h-[2px] after:bg-amber-400'
         : 'text-slate-300 hover:text-white'
     }`;
 
   const isStaff = user?.role === 'admin' || user?.role === 'sales';
 
   return (
-    <nav className="sticky top-0 z-50 bg-slate-950/90 backdrop-blur border-b border-slate-800">
-      <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-        {/* Logo */}
-        <Link href="/" className="text-xl font-bold text-white tracking-tight">
-          AutoDrive <span className="text-blue-500">Showroom</span>
+    <nav className="sticky top-0 z-50 bg-[#090b10]/85 backdrop-blur-xl border-b border-white/10">
+      <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+        {/* Brand Identity */}
+        <Link href="/" className="flex items-center gap-3 group">
+          <div className="w-9 h-9 rounded-lg bg-linear-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 font-black text-base shadow-lg shadow-amber-500/20">
+            A
+          </div>
+          <div>
+            <span className="text-lg font-bold tracking-wider text-white uppercase block leading-none">
+              AutoDrive
+            </span>
+            <span className="text-[10px] tracking-[0.28em] text-amber-400/90 uppercase block mt-1">
+              Prestige Motors
+            </span>
+          </div>
         </Link>
 
         {/* Menu Navigasi */}
-        <div className="hidden md:flex items-center gap-6">
+        <div className="hidden md:flex items-center gap-8">
           <Link href="/" className={navLinkClass('/')}>
-            Katalog Mobil
+            Koleksi Unit
           </Link>
           <Link href="/saw" className={navLinkClass('/saw')}>
             Rekomendasi SAW
@@ -76,43 +86,44 @@ export default function Navbar() {
           )}
           {isStaff && (
             <Link href="/admin" className={navLinkClass('/admin')}>
-              Dashboard {user?.role === 'admin' ? 'Admin' : 'Sales'}
+              Portal {user?.role === 'admin' ? 'Admin' : 'Sales'}
             </Link>
           )}
         </div>
 
-        {/* Tombol Auth */}
+        {/* Auth Controls */}
         <div className="flex items-center gap-3">
           {user ? (
             <>
-              <span className="hidden sm:inline-block text-xs text-slate-400">
-                Halo, <strong className="text-slate-200">{user.name || user.email}</strong>
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="text-slate-200 font-medium">{user.name || user.email}</span>
                 {user.role && (
-                  <span className="ml-1.5 px-1.5 py-0.5 rounded bg-slate-800 text-[10px] uppercase text-blue-400">
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[10px] uppercase font-bold">
                     {user.role}
                   </span>
                 )}
-              </span>
+              </div>
               <button
                 onClick={handleLogout}
-                className="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 transition cursor-pointer"
+                className="px-4 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider bg-white/5 text-slate-300 border border-white/10 hover:bg-red-500/15 hover:text-red-300 hover:border-red-500/30 transition cursor-pointer"
               >
-                Logout
+                Keluar
               </button>
             </>
           ) : (
             <>
               <Link
                 href="/login"
-                className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white transition"
+                className="px-4 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-white transition"
               >
                 Masuk
               </Link>
               <Link
                 href="/register"
-                className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-500 transition"
+                className="px-5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider bg-linear-to-r from-amber-400 to-amber-500 text-slate-950 hover:from-amber-300 hover:to-amber-400 shadow-lg shadow-amber-500/20 transition"
               >
-                Daftar
+                Daftar Member
               </Link>
             </>
           )}
