@@ -1,355 +1,372 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
 
-interface Category {
-  id: number;
-  name: string;
-}
-
-interface RecommendationDetail {
+interface RecommendationResult {
+  car_id?: number;
   id?: number;
-  car_id: number;
-  rank: number;
-  price_score: number;
-  category_score: number;
-  trans_score: number;
-  fuel_score: number;
-  year_score: number;
-  final_score: number;
-  match_percentage: number;
-  reason: string;
-  car: {
+  model_name?: string;
+  brand_name?: string;
+  price?: number;
+  year?: number;
+  score?: number;
+  total_score?: number;
+  preference_value?: number;
+  rank?: number;
+  car?: {
     id: number;
     model_name: string;
     year: number;
     price: number;
-    mileage: number;
     transmission: string;
     fuel_type: string;
+    mileage: number;
     brand?: { name: string };
-    category?: { name: string };
   };
+}
+
+interface HistoryItem {
+  id: number;
+  created_at?: string;
+  weight_price?: number;
+  weight_year?: number;
+  weight_mileage?: number;
+  weight_fuel?: number;
+  weight_capacity?: number;
+  results?: RecommendationResult[];
+}
+
+function extractArray(raw: any): any[] {
+  if (Array.isArray(raw)) return raw;
+  if (Array.isArray(raw?.data)) return raw.data;
+  if (Array.isArray(raw?.data?.results)) return raw.data.results;
+  if (Array.isArray(raw?.data?.recommendations)) return raw.data.recommendations;
+  if (Array.isArray(raw?.data?.items)) return raw.data.items;
+  return [];
 }
 
 export default function SawRecommendationPage() {
   const router = useRouter();
-  const [categories, setCategories] = useState<Category[]>([]);
 
-  // Form state sesuai struct SAWInput di Go
-  const [minBudget, setMinBudget] = useState<string>('100000000');
-  const [maxBudget, setMaxBudget] = useState<string>('250000000');
-  const [preferredCategoryId, setPreferredCategoryId] = useState<number>(0);
-  const [preferredTrans, setPreferredTrans] = useState<string>('Bebas');
-  const [preferredFuel, setPreferredFuel] = useState<string>('Bebas');
-  const [priority, setPriority] = useState<string>('harga_terjangkau');
+  // Bobot Kriteria SAW (1 - 5)
+  const [weightPrice, setWeightPrice] = useState<number>(5);
+  const [weightYear, setWeightYear] = useState<number>(4);
+  const [weightMileage, setWeightMileage] = useState<number>(4);
+  const [weightFuel, setWeightFuel] = useState<number>(3);
+  const [weightCapacity, setWeightCapacity] = useState<number>(3);
 
-  const [results, setResults] = useState<RecommendationDetail[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Filter Opsional
+  const [maxBudget, setMaxBudget] = useState<string>('');
+  const [minSeats, setMinSeats] = useState<string>('');
+
+  const [results, setResults] = useState<RecommendationResult[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [calculating, setCalculating] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const loadHistory = async () => {
+    try {
+      const res = await apiFetch('/buyer/recommendations/history');
+      setHistory(extractArray(res));
+    } catch {
+      // Abaikan jika riwayat kosong
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadInitialData() {
-      try {
-        const catRes = await apiFetch('/categories');
-        const catList = Array.isArray(catRes) ? catRes : catRes?.data || [];
-        setCategories(catList);
-      } catch {
-        // Abaikan jika gagal memuat kategori
-      }
-
-      // Jika user sudah login, muat riwayat rekomendasi terakhir otomatis
-      const token = localStorage.getItem('token');
-      if (token) {
-        try {
-          const histRes = await apiFetch('/buyer/recommendations/history');
-          const histList = Array.isArray(histRes) ? histRes : histRes?.data || [];
-          if (histList.length > 0 && Array.isArray(histList[0].details)) {
-            setResults(histList[0].details);
-          }
-        } catch {
-          // Riwayat kosong
-        }
-      }
-    }
-
-    loadInitialData();
-  }, []);
-
-  const handleCalculate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
     const token = localStorage.getItem('token');
     if (!token) {
-      alert('Silakan login terlebih dahulu untuk menghitung rekomendasi SAW.');
       router.push('/login');
       return;
     }
+    loadHistory();
+  }, []);
 
-    const parsedMin = Number(minBudget) || 0;
-    const parsedMax = Number(maxBudget);
+  const totalWeight = weightPrice + weightYear + weightMileage + weightFuel + weightCapacity;
 
-    if (!parsedMax || parsedMax <= 0) {
-      setError('Batas maksimal budget wajib diisi dengan benar.');
-      return;
-    }
-
-    setLoading(true);
+  const handleCalculate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setCalculating(true);
 
     try {
-      const payload = {
-        budget_range: `Rp ${parsedMin.toLocaleString('id-ID')} - Rp ${parsedMax.toLocaleString('id-ID')}`,
-        min_budget: parsedMin,
-        max_budget: parsedMax,
-        preferred_category_id: Number(preferredCategoryId),
-        preferred_transmission: preferredTrans,
-        preferred_fuel: preferredFuel,
-        priority: priority,
+      const payload: any = {
+        weight_price: Number(weightPrice),
+        weight_year: Number(weightYear),
+        weight_mileage: Number(weightMileage),
+        weight_fuel: Number(weightFuel),
+        weight_capacity: Number(weightCapacity),
       };
+
+      if (maxBudget && Number(maxBudget) > 0) payload.max_budget = Number(maxBudget);
+      if (minSeats && Number(minSeats) > 0) payload.min_seats = Number(minSeats);
 
       const res = await apiFetch('/buyer/recommendations/calculate', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
 
-      const details = res?.data?.details || res?.details || [];
-      setResults(details);
+      const list = extractArray(res);
+      setResults(list);
+      await loadHistory();
     } catch (err: any) {
-      setError(err.message || 'Gagal menghitung rekomendasi SAW');
+      setErrorMsg(err.message || 'Gagal menghitung rekomendasi SAW.');
     } finally {
-      setLoading(false);
+      setCalculating(false);
     }
   };
 
+  const criteriaSliders = [
+    {
+      label: 'Harga OTR (Cost)',
+      desc: 'Prioritas harga semakin terjangkau',
+      value: weightPrice,
+      setter: setWeightPrice,
+    },
+    {
+      label: 'Tahun Produksi (Benefit)',
+      desc: 'Prioritas keluaran tahun terbaru',
+      value: weightYear,
+      setter: setWeightYear,
+    },
+    {
+      label: 'Jarak Tempuh / KM (Cost)',
+      desc: 'Prioritas odometer rendah',
+      value: weightMileage,
+      setter: setWeightMileage,
+    },
+    {
+      label: 'Efisiensi BBM (Benefit)',
+      desc: 'Prioritas konsumsi bahan bakar irit',
+      value: weightFuel,
+      setter: setWeightFuel,
+    },
+    {
+      label: 'Kapasitas Kursi (Benefit)',
+      desc: 'Prioritas daya tampung penumpang',
+      value: weightCapacity,
+      setter: setWeightCapacity,
+    },
+  ];
+
   return (
-    <main className="min-h-screen px-6 py-8">
-      <div className="max-w-6xl mx-auto">
+    <main className="min-h-screen px-6 py-10 bg-[#090b10]">
+      <div className="max-w-7xl mx-auto">
         <header className="mb-8">
-          <h1 className="text-2xl font-bold text-white">
-            Sistem Rekomendasi Mobil (Metode SAW)
+          <span className="text-[11px] uppercase tracking-[0.22em] text-amber-400 font-semibold">
+            Decision Support System
+          </span>
+          <h1 className="text-3xl font-bold text-white mt-1">
+            Rekomendasi Unit Cerdas (Metode SAW)
           </h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Masukkan budget, preferensi spesifikasi, dan prioritas utama Anda untuk mendapatkan 5 rekomendasi unit terbaik.
+          <p className="text-slate-400 text-sm mt-1 max-w-2xl">
+            Atur tingkat prioritas setiap kriteria dari skala <strong className="text-slate-200">1 (Rendah)</strong> hingga{' '}
+            <strong className="text-amber-300">5 (Sangat Penting)</strong> untuk mendapatkan peringkat unit terbaik secara objektif.
           </p>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Panel Kiri: Form Preferensi Pembeli */}
+          {/* Form Bobot Kriteria */}
           <form
             onSubmit={handleCalculate}
-            className="lg:col-span-5 rounded-2xl bg-slate-900 border border-slate-800 p-6 h-fit space-y-4"
+            className="lg:col-span-5 rounded-2xl bg-[#10131c] border border-white/10 p-6 space-y-5 h-fit"
           >
-            <h2 className="text-base font-semibold text-white pb-3 border-b border-slate-800">
-              Preferensi & Kriteria Anda
-            </h2>
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <h2 className="text-base font-bold text-white">Preferensi & Bobot Kriteria</h2>
+              <span className="px-2.5 py-1 rounded-lg bg-amber-400/15 border border-amber-400/30 text-[11px] font-bold text-amber-300">
+                Total Bobot: {totalWeight}
+              </span>
+            </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-4">
+              {criteriaSliders.map((item) => {
+                const pct = totalWeight > 0 ? Math.round((item.value / totalWeight) * 100) : 0;
+                return (
+                  <div key={item.label} className="p-3.5 rounded-xl bg-[#090b10] border border-white/5">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-semibold text-white">{item.label}</span>
+                      <span className="text-xs font-bold text-amber-400">
+                        Skala {item.value}/5 ({pct}%)
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mb-2">{item.desc}</p>
+                    <input
+                      type="range"
+                      min={1}
+                      max={5}
+                      step={1}
+                      value={item.value}
+                      onChange={(e) => item.setter(Number(e.target.value))}
+                      className="w-full accent-amber-400 cursor-pointer"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Budget Minimal (Rp)
-                </label>
+                <label className="block text-xs text-slate-300 mb-1">Maksimal Budget (Opsional)</label>
                 <input
                   type="number"
-                  min={0}
-                  step={5000000}
-                  value={minBudget}
-                  onChange={(e) => setMinBudget(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Budget Maksimal (Rp) *
-                </label>
-                <input
-                  type="number"
-                  required
-                  min={10000000}
                   step={5000000}
                   value={maxBudget}
                   onChange={(e) => setMaxBudget(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
+                  placeholder="Contoh: 300000000"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-xs text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">Min. Kursi (Opsional)</label>
+                <input
+                  type="number"
+                  min={2}
+                  max={10}
+                  value={minSeats}
+                  onChange={(e) => setMinSeats(e.target.value)}
+                  placeholder="Contoh: 5"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-[#090b10] border border-white/10 text-xs text-white"
                 />
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Kategori Mobil
-              </label>
-              <select
-                value={preferredCategoryId}
-                onChange={(e) => setPreferredCategoryId(Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value={0}>Semua Kategori (Bebas)</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Transmisi
-                </label>
-                <select
-                  value={preferredTrans}
-                  onChange={(e) => setPreferredTrans(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                >
-                  <option value="Bebas">Bebas</option>
-                  <option value="Automatic">Automatic</option>
-                  <option value="Manual">Manual</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  Bahan Bakar
-                </label>
-                <select
-                  value={preferredFuel}
-                  onChange={(e) => setPreferredFuel(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-                >
-                  <option value="Bebas">Bebas</option>
-                  <option value="Bensin">Bensin</option>
-                  <option value="Diesel">Diesel</option>
-                  <option value="Hybrid">Hybrid</option>
-                  <option value="Listrik">Listrik</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Prioritas Utama Pembobotan SAW
-              </label>
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-sm text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="harga_terjangkau">Harga Paling Terjangkau</option>
-                <option value="kapasitas">Kapasitas Penumpang & Keluarga</option>
-                <option value="irit_bbm">Konsumsi BBM Paling Irit</option>
-                <option value="performa">Performa Mesin & Tahun Muda</option>
-              </select>
-            </div>
-
-            {error && (
-              <div className="p-3 rounded-lg bg-red-950/60 border border-red-800 text-red-300 text-xs">
-                {error}
+            {errorMsg && (
+              <div className="p-3 rounded-xl bg-red-950/60 border border-red-500/40 text-xs text-red-300">
+                {errorMsg}
               </div>
             )}
 
             <button
               type="submit"
-              disabled={loading}
-              className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold transition cursor-pointer"
+              disabled={calculating}
+              className="w-full py-3.5 rounded-xl bg-linear-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 disabled:opacity-50 text-slate-950 text-xs font-bold uppercase tracking-wider shadow-lg shadow-amber-500/20 transition cursor-pointer"
             >
-              {loading ? 'Menghitung Perankingan...' : 'Cari Rekomendasi Terbaik'}
+              {calculating ? 'Menganalisis Unit...' : 'Hitung Peringkat Terbaik'}
             </button>
           </form>
 
-          {/* Panel Kanan: Top 5 Hasil Perankingan */}
-          <div className="lg:col-span-7 space-y-4">
-            <h2 className="text-base font-semibold text-white">
-              Top Rekomendasi Unit Terbaik
-            </h2>
+          {/* Hasil Perankingan & Riwayat */}
+          <div className="lg:col-span-7 space-y-8">
+            <div className="space-y-4">
+              <h2 className="text-base font-bold text-white">Hasil Peringkat Rekomendasi</h2>
 
-            {results.length === 0 ? (
-              <div className="rounded-2xl bg-slate-900/60 border border-dashed border-slate-800 p-10 text-center">
-                <p className="text-slate-400 text-sm">
-                  Isi preferensi budget & prioritas Anda di sebelah kiri, lalu klik{' '}
-                  <strong className="text-slate-200">Cari Rekomendasi Terbaik</strong>.
-                </p>
-              </div>
-            ) : (
-              results.map((item, index) => {
-                const carData = item.car;
-                const rankNumber = item.rank || index + 1;
+              {results.length === 0 ? (
+                <div className="p-10 rounded-2xl bg-[#10131c] border border-dashed border-white/10 text-center">
+                  <p className="text-slate-400 text-sm">
+                    Atur bobot preferensi di samping, lalu klik <strong className="text-amber-300">Hitung Peringkat Terbaik</strong> untuk melihat urutan unit paling sesuai.
+                  </p>
+                </div>
+              ) : (
+                results.map((item, idx) => {
+                  const carObj = item.car;
+                  const targetCarId = carObj?.id || item.car_id || item.id;
+                  const carTitle = carObj
+                    ? `${carObj.brand?.name ? `${carObj.brand.name} ` : ''}${carObj.model_name}`
+                    : `${item.brand_name ? `${item.brand_name} ` : ''}${item.model_name || `Unit #${targetCarId}`}`;
+                  const carPrice = carObj?.price ?? item.price ?? 0;
+                  const carYear = carObj?.year ?? item.year;
+                  const rawScore = item.score ?? item.total_score ?? item.preference_value ?? 0;
 
-                return (
-                  <div
-                    key={item.car_id || index}
-                    className={`rounded-xl border p-5 transition ${
-                      rankNumber === 1
-                        ? 'bg-blue-950/20 border-blue-500/60'
-                        : 'bg-slate-900 border-slate-800'
-                    }`}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                  return (
+                    <div
+                      key={`${targetCarId}-${idx}`}
+                      className={`p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition ${
+                        idx === 0
+                          ? 'bg-linear-to-r from-amber-500/10 via-[#10131c] to-[#10131c] border-amber-400/50 shadow-xl shadow-amber-500/5'
+                          : 'bg-[#10131c] border-white/10'
+                      }`}
+                    >
                       <div className="flex items-start gap-4">
                         <div
-                          className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 ${
-                            rankNumber === 1
-                              ? 'bg-blue-600 text-white'
-                              : 'bg-slate-800 text-slate-300'
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm shrink-0 ${
+                            idx === 0
+                              ? 'bg-amber-400 text-slate-950'
+                              : 'bg-white/10 text-slate-200'
                           }`}
                         >
-                          #{rankNumber}
+                          #{item.rank || idx + 1}
                         </div>
 
                         <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="font-semibold text-white">
-                              {carData?.brand?.name ? `${carData.brand.name} ` : ''}
-                              {carData?.model_name}
-                            </h3>
-                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-semibold">
-                              Cocok {item.match_percentage}%
-                            </span>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-white text-base">{carTitle}</h3>
+                            {idx === 0 && (
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                                Best Match
+                              </span>
+                            )}
                           </div>
-
-                          <p className="text-base font-bold text-emerald-400 mt-1">
-                            Rp {Number(carData?.price || 0).toLocaleString('id-ID')}
+                          <p className="text-sm font-bold text-amber-400 mt-1">
+                            Rp {Number(carPrice).toLocaleString('id-ID')}
+                            {carYear ? <span className="text-xs text-slate-400 font-normal"> • Tahun {carYear}</span> : ''}
                           </p>
-
-                          <p className="text-xs text-slate-400 mt-1">
-                            Tahun {carData?.year} • {carData?.transmission} •{' '}
-                            {carData?.fuel_type} • {carData?.mileage?.toLocaleString('id-ID')} km
-                          </p>
-
-                          {item.reason && (
-                            <p className="text-xs text-slate-300 mt-2.5 bg-slate-950/70 p-2.5 rounded-lg border border-slate-800/80">
-                              {item.reason}
+                          {carObj && (
+                            <p className="text-xs text-slate-400 mt-1">
+                              {carObj.transmission} • {carObj.fuel_type} •{' '}
+                              {Number(carObj.mileage || 0).toLocaleString('id-ID')} km
                             </p>
                           )}
                         </div>
                       </div>
 
-                      <div className="flex sm:flex-col items-center sm:items-end justify-between border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-800 shrink-0">
+                      <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2 shrink-0">
                         <div className="text-right">
-                          <span className="block text-[10px] uppercase text-slate-500">
-                            Skor SAW
+                          <span className="text-[10px] uppercase tracking-wider text-slate-500 block">
+                            Skor Preferensi
                           </span>
-                          <span className="text-lg font-bold text-blue-400">
-                            {Number(item.final_score || 0).toFixed(4)}
-                          </span>
+                          <strong className="text-lg font-mono font-bold text-emerald-400">
+                            {Number(rawScore).toFixed(4)}
+                          </strong>
                         </div>
-                        {carData?.id && (
+
+                        {targetCarId && (
                           <Link
-                            href={`/cars/${carData.id}`}
-                            className="mt-2 text-xs text-blue-400 hover:underline font-medium"
+                            href={`/cars/${targetCarId}`}
+                            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-amber-400 text-white hover:text-slate-950 text-xs font-bold uppercase tracking-wider transition"
                           >
-                            Lihat Detail →
+                            Lihat Unit
                           </Link>
                         )}
                       </div>
                     </div>
-                  </div>
-                );
-              })
+                  );
+                })
+              )}
+            </div>
+
+            {/* Riwayat Analisis SAW */}
+            {!loadingHistory && history.length > 0 && (
+              <div className="space-y-3 pt-4 border-t border-white/10">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
+                  Riwayat Analisis Terakhir ({history.length})
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {history.slice(0, 4).map((h) => (
+                    <div
+                      key={h.id}
+                      className="p-4 rounded-xl bg-[#10131c] border border-white/10 text-xs space-y-1"
+                    >
+                      <div className="flex justify-between text-amber-400 font-semibold">
+                        <span>Sesi Analisis #{h.id}</span>
+                        {h.created_at && (
+                          <span className="text-slate-500 font-normal">
+                            {new Date(h.created_at).toLocaleDateString('id-ID')}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-400">
+                        Bobot: Harga ({h.weight_price}), Tahun ({h.weight_year}), KM ({h.weight_mileage})
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         </div>
