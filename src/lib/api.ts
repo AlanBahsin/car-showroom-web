@@ -17,10 +17,19 @@ export async function apiFetch<T = any>(
     headers,
   });
 
-  const data = await res.json();
+  const rawText = await res.text();
+  let data: any = null;
+
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    data = { message: rawText };
+  }
 
   if (!res.ok) {
-    throw new Error(data.message || 'Terjadi kesalahan pada server API');
+    throw new Error(
+      data?.message || data?.error || `HTTP ${res.status}: ${rawText || 'Endpoint tidak ditemukan'}`
+    );
   }
 
   return data;
